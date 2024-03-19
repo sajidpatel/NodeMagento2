@@ -41,4 +41,4 @@ npm run dev
 ```
 
 To find products with search term in name, description and filter by price between minPrice and maxPrice
-http://localhost:3000/api/products/search?searchTerm=search%20term&page=1&limit=10&filters=%7B%22priceRange%22%3A%2221%2C200%22%7D
+/api/products/search?searchTerm=search%20term&page=1&limit=10&filters=%7B%22priceRange%22%3A%2221%2C200%22%7D
