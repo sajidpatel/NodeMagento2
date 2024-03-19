@@ -6,6 +6,7 @@ import Product from '../models/Product';
 import ProductName from '../models/ProductName';
 import ProductDescription from '../models/ProductDescription';
 import ProductPrice from '../models/ProductPrice';
+import ProductCategory from '../models/ProductCategory';
 
 // Load environment variables
 dotenv.config();
@@ -28,29 +29,36 @@ const searchProducts = async (req: Request, res: Response) => {
     const offset = (page - 1) * safeLimit;
 
     let whereCondition: any = {};
+    let includeModels: any[] = [];
 
     if (searchTerm) {
-        searchTerm = searchTerm.toLowerCase();
-        whereCondition = {
-            [Op.or]: [
-                Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('productNames.value')), { [Op.like]: `%${searchTerm}%` }),
-                Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('sku')), { [Op.like]: `%${searchTerm}%` }),
-                Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('productDescriptions.value')), { [Op.like]: `%${searchTerm}%` }),
-            ]
-        };
+        const lowerCaseTerm = `%${searchTerm.toLowerCase()}%`;
+        whereCondition[Op.or] = [
+            Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('productNames.value')), { [Op.like]: lowerCaseTerm }),
+            Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('sku')), { [Op.like]: lowerCaseTerm }),
+            Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('productDescriptions.value')), { [Op.like]: lowerCaseTerm }),
+        ];
+        includeModels.push(
+            { model: ProductName, as: 'productNames', attributes: ['value'], required: false },
+            { model: ProductDescription, as: 'productDescriptions', attributes: ['value'], required: false },
+        );
     }
 
-    // Additional filters
     const filters = req.query.filters ? JSON.parse(req.query.filters as string) : {};
-
+    console.log(filters);
     if (filters.priceRange) {
-        whereCondition['$productPrices.value$'] = {
-            [Op.between]: filters.priceRange.split(',').map((price: string) => parseFloat(price)),
-        };
+        const priceRange = filters.priceRange.split(',').map((price: string) => parseFloat(price));
+        if (!whereCondition[Op.and]) {
+            whereCondition[Op.and] = [];
+        }
+        whereCondition[Op.and].push(Sequelize.where(Sequelize.col('productPrices.value'), { [Op.between]: priceRange }));
+        includeModels.push({ model: ProductPrice, as: 'productPrices', attributes: ['value'], required: true });
     }
     if (filters.category) {
-        // Assuming categories are associated with products in your model
-        whereCondition['$categories.name$'] = { [Op.like]: `%${filters.category}%` };
+        if (!whereCondition[Op.and]) {
+            whereCondition[Op.and] = [];
+        }
+        includeModels.push({ model: ProductCategory, as: 'categories', where: { name: { [Op.like]: `%${filters.category}%` } }, required: true });
     }
 
     const redisKey = generateRedisKey(searchTerm, page, safeLimit, JSON.stringify(filters));
@@ -67,22 +75,14 @@ const searchProducts = async (req: Request, res: Response) => {
 
         const total = await Product.count({
             where: whereCondition,
-            include: [
-                { model: ProductName, as: 'productNames', attributes: ['value'], required: false },
-                { model: ProductDescription, as: 'productDescriptions', attributes: ['value'], required: false },
-                { model: ProductPrice, as: 'productPrices', attributes: ['value'], required: false }
-            ],
+            include: includeModels,
             distinct: true,
             col: 'entity_id'
         });
 
         const products = await Product.findAll({
             where: whereCondition,
-            include: [
-                { model: ProductName, as: 'productNames', attributes: ['value'], required: false },
-                { model: ProductDescription, as: 'productDescriptions', attributes: ['value'], required: false },
-                { model: ProductPrice, as: 'productPrices', attributes: ['value'], required: false }
-            ],
+            include: includeModels,
             limit: safeLimit,
             offset: offset,
             subQuery: false
@@ -104,7 +104,7 @@ const searchProducts = async (req: Request, res: Response) => {
             data: products
         });
     } catch (error: any) {
-        console.error('Error searching products:', error.message, error.stack);
+        console.error(`Error searching products: ${error.message}\n${error.stack}`);
         res.status(500).json({ error: 'Internal server error' });
     }
 };
